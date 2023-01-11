@@ -159,7 +159,7 @@ class ForceFieldModel(snt.Module):
 
 class FFJORDFlow(tfd.TransformedDistribution):
     def __init__(self, n_dim, n_hidden, hidden_size, n_bij,
-                 reg_kw=dict(), rtol=1.e-7, atol=1.e-5, 
+                 reg_kw=dict(), rtol=1.e-7, atol=1.e-5,
                  base_mean=None, base_std=None, name='DF'):
         self._n_dim = n_dim
         self._n_hidden = n_hidden
@@ -257,7 +257,7 @@ class FFJORDFlow(tfd.TransformedDistribution):
         if checkpoint_name.find('-') == -1 or not checkpoint_name.rsplit('-', 1)[1].isdigit():
             raise ValueError("FFJORDFlow checkpoint name doesn't follow the correct syntax.")
         spec_name = checkpoint_name.rsplit('-', 1)[0] + "_spec.json"
-        
+
         # Load network specs
         with open(spec_name, 'r') as f:
             kw = json.load(f)
@@ -265,7 +265,7 @@ class FFJORDFlow(tfd.TransformedDistribution):
 
         # Restore variables
         checkpoint = tf.train.Checkpoint(flow=flow)
-        checkpoint.restore(checkpoint_name).expect_partial() 
+        checkpoint.restore(checkpoint_name).expect_partial()
 
         print(f'loaded {flow} from {checkpoint_name}')
         return flow
@@ -285,9 +285,10 @@ def train_flow(flow, data,
                n_epochs=1,
                lr_type='step',
                lr_init=2.e-2,
-               lr_final=1.e-4,
+               lr_final=1.e-4, # to remove - replaced by n_drops
                lr_patience=32,
                lr_min_delta=0.01,
+               lr_n_drops=None, # describe lr settings
                warmup_proportion=0.1,
                validation_frac=0.25,
                checkpoint_every=None,
@@ -349,6 +350,7 @@ def train_flow(flow, data,
         elif lr_type == 'step':
             lr_schedule = lr_init
             steps_since_decline = 0
+            drops_since_improved = 0
         else:
             raise ValueError(
                 f'Unknown lr_type: "{lr_type}" ("exponential" or "step")'
@@ -467,6 +469,7 @@ def train_flow(flow, data,
 
             if loss_avg < loss_min - lr_min_delta:
                 steps_since_decline = 0
+                drops_since_improved = 0
                 print(f'New minimum loss: {loss_avg}.')
                 loss_min.assign(loss_avg)
             elif steps_since_decline >= lr_patience:
@@ -477,6 +480,28 @@ def train_flow(flow, data,
                 print(f'   (loss threshold: {float(loss_min-lr_min_delta)})')
                 opt.lr.assign(new_lr)
                 steps_since_decline = 0
+                drops_since_improved += 1
+                if lr_n_drops is not None:
+                    if drops_since_improved >= lr_n_drops:
+                        print('Checkpointing final ...')
+                        step.assign(i+1)
+                        chkpt_fname = chkpt_manager.save()
+                        print(f'  --> {chkpt_fname}')
+                        save_loss_history(
+                            f'{chkpt_fname}_loss.txt',
+                            loss_history,
+                            val_loss_history=val_loss_history,
+                            lr_history=lr_history
+                        )
+                        fig = plot_loss(
+                            loss_history,
+                            val_loss_hist=val_loss_history,
+                            lr_hist=lr_history
+                        )
+                        fig.savefig(f'{chkpt_fname}_loss_final.png')
+                        plt.close(fig)
+                        return loss_history, val_loss_history, lr_history
+
             else:
                 steps_since_decline += 1
 
@@ -504,7 +529,7 @@ def train_flow(flow, data,
                 val_loss_hist=val_loss_history,
                 lr_hist=lr_history
             )
-            fig.savefig(f'{chkpt_fname}_loss.pdf')
+            fig.savefig(f'{chkpt_fname}_loss.png')
             plt.close(fig)
 
     t2 = time()
@@ -588,4 +613,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

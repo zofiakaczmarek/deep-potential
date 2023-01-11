@@ -55,7 +55,7 @@ def load_data(fname):
     return d, attrs
 
 
-def train_flows(data, fname_pattern,
+def train_flows(data, fname_pattern, n_dim=6,
                 n_flows=1, n_hidden=4, hidden_size=32, n_bij=1,
                 n_epochs=128, batch_size=1024, validation_frac=0.25,
                 reg={}, lr={}, optimizer='RAdam', warmup_proportion=0.1,
@@ -76,7 +76,7 @@ def train_flows(data, fname_pattern,
         print(f'Training flow {i+1} of {n_flows} ...')
 
         flow_model = flow_ffjord_tf.FFJORDFlow(
-            6, n_hidden, hidden_size, n_bij,
+            n_dim, n_hidden, hidden_size, n_bij,
             reg_kw=reg,
             base_mean=data_mean, base_std=data_std
         )
@@ -87,6 +87,9 @@ def train_flows(data, fname_pattern,
         checkpoint_dir, checkpoint_name = os.path.split(flow_fname)
         Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
         flow_model.save_specs(flow_fname)
+
+        if len(checkpoint_dir)==0:
+            raise ValueError(f'Filename pattern {fname_pattern} not producing a correct path. Files will not be saved. Try following the default format: models/df/name_{{:02d}}/flow.')
 
 
         lr_kw = {f'lr_{k}':lr[k] for k in lr}
@@ -168,7 +171,7 @@ def train_potential(df_data, fname,
 
 
     loss_history = potential_tf.train_potential(
-        df_data, phi_model,
+        df_data, phi_model, n_dim=3,
         frameshift_model=frameshift_model,
         n_epochs=n_epochs,
         batch_size=batch_size,
@@ -233,7 +236,7 @@ def batch_calc_df_deta(flow, eta, batch_size):
 
 def clipped_vector_mean(v_samp, clip_threshold=5, rounds=5, **kwargs):
     n_samp, n_point, n_dim = v_samp.shape
-    
+
     # Mean vector: shape = (point, dim)
     v_mean = np.mean(v_samp, axis=0)
 
@@ -247,7 +250,7 @@ def clipped_vector_mean(v_samp, clip_threshold=5, rounds=5, **kwargs):
         v_samp_ma = np.ma.masked_array(v_samp, mask=mask_bad)
         # Take mean of masked array
         v_mean = np.ma.mean(v_samp_ma, axis=0)
-    
+
     return v_mean
 
 
@@ -317,7 +320,7 @@ def load_flows(fname_patterns):
         flow_dir = os.path.split(fname_patterns.format(i))[0]
         if os.path.isdir(flow_dir) and flow_dir not in checkpoint_dirs:
             checkpoint_dirs.append(flow_dir)
-    
+
     print(f'Found {len(checkpoint_dirs)} flows.')
 
     # Load flows
@@ -347,7 +350,7 @@ def load_df_data(fname, recalc_avg=None):
     with h5py.File(fname, 'r') as f:
         for k in f.keys():
             d[k] = f[k][:].astype('f4')
-    
+
     if recalc_avg == 'mean':
         d['df_deta'] = clipped_vector_mean(d['df_deta_indiv'])
     elif recalc_avg == 'median':
@@ -383,7 +386,8 @@ def load_params(fname):
                         "init": {'type':'float', 'default':0.02},
                         "final": {'type':'float', 'default':0.0001},
                         "patience": {'type':'integer', 'default':32},
-                        "min_delta": {'type':'float', 'default':0.01}
+                        "min_delta": {'type':'float', 'default':0.01},
+                        "n_drops": {'type':'float', 'default':5}
                     }
                 },
                 "n_epochs": {'type':'integer', 'default':64},
@@ -416,7 +420,8 @@ def load_params(fname):
                         "init": {'type':'float', 'default':0.001},
                         "final": {'type':'float', 'default':0.0001},
                         "patience": {'type':'integer', 'default':32},
-                        "min_delta": {'type':'float', 'default':0.01}
+                        "min_delta": {'type':'float', 'default':0.01},
+                        "n_drops": {'type':'float', 'default':5}
                     }
                 },
                 "validation_frac": {'type':'float', 'default':0.25},
@@ -524,11 +529,12 @@ def main():
         # Load input phase-space positions to train the flow on
         data, attrs = load_data(args.input)
         print(f'Loaded {data.shape[0]} phase-space positions.')
+        print(f'{data.shape[1]} dimensions in data.')
 
         # Train and save normalizing flows
         print('Training normalizing flows ...')
         flows = train_flows(
-            data, args.flow_fname,
+            data, args.flow_fname, n_dim=data.shape[1],
             **params['df']
         )
     # Re-load the flows (this removes the regularization terms)
@@ -536,7 +542,7 @@ def main():
 
 
     # ================= Sampling the flow/loading samples =================
-    if args.no_flow_sampling:
+    if args.no_flow_sampling and not args.no_potential_training:
         print('Loading DF gradients ...')
         df_data = load_df_data(args.df_grads_fname)
         params['Phi'].pop('n_samples')
@@ -580,7 +586,7 @@ def main():
             guided_potential=args.guided_potential,
             **params['Phi']
         )
-    
+
     return 0
 
 

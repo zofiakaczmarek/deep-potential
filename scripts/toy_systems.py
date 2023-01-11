@@ -50,16 +50,16 @@ class PlummerSphere(object):
         #    0, 10
         #)
         self.df_norm = 24*np.sqrt(2.) / (7*np.pi**3)
-    
+
     def psi(self, r):
         return 1 / np.sqrt(1 + r**2)
-    
+
     def phi(self, r):
         return -self.psi(r)
 
     def rho(self, r):
         return 3/(4*np.pi) * (1+r**2)**(-5/2)
-    
+
     def sample_r(self, n):
         # return self._r_sampler(n)
         u = np.random.uniform(size=n)
@@ -75,11 +75,58 @@ class PlummerSphere(object):
         v = v[:,None] * draw_from_sphere(n)
 
         return x, v
-    
+
     def df(self, x, v):
         r = np.sqrt(np.sum(x**2, axis=1))
         v2 = np.sum(v**2, axis=1)
         E = self.psi(r) - 0.5*v2
+        return self.df_norm * np.clip(E, 0., np.inf)**(7/2)
+
+
+class PlummerSphereScale(object):
+    # same but with a scale height a
+    def __init__(self, a):
+        self.a = a
+        self._v_sampler = get_1d_sampler(
+            lambda v: v**2 * (1 - v**2 / 2)**(7/2),
+            0., np.sqrt(2.)-1.e-8,
+            n=1000
+        )
+        #self._r_sampler = get_1d_sampler(
+        #    lambda r: r**2 * (1+r**2)**(-5/2),
+        #    0, 10
+        #)
+        self.df_norm = 24*np.sqrt(2.) / (7*np.pi**3)
+
+    def psi(self, a, r):
+        return 1 / np.sqrt(a**2 + r**2)
+
+    def phi(self, a, r):
+        return -self.psi(a, r)
+
+    def rho(self, a, r):
+        return 3/(4*np.pi*a**3) * (1+r**2/a**2)**(-5/2)
+
+    def sample_r(self, a, n):
+        # return self._r_sampler(n)
+        u = np.random.uniform(size=n)
+        r = a / np.sqrt(u**(-2/3) - 1)
+        return r
+
+    def sample_df(self, a, n):
+        r = self.sample_r(a, n)
+        x = r[:,None] * draw_from_sphere(n)
+
+        psi = self.psi(a, r)
+        v = np.sqrt(psi) * self._v_sampler(n)
+        v = v[:,None] * draw_from_sphere(n)
+
+        return x, v
+
+    def df(self, x, v):
+        r = np.sqrt(np.sum(x**2, axis=1))
+        v2 = np.sum(v**2, axis=1)
+        E = self.psi(a, r) - 0.5*v2
         return self.df_norm * np.clip(E, 0., np.inf)**(7/2)
 
 
@@ -124,4 +171,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
